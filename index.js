@@ -33,18 +33,78 @@ app.use(
 app.use(express.json());
 
 // Configure Nodemailer transporter
+// const transporter = nodemailer.createTransport({
+//   service: process.env.EMAIL_SERVICE,
+//   auth: {
+//     user: process.env.EMAIL_USER,
+//     pass: process.env.EMAIL_PASS,
+//   },
+//   pool: true,
+//   maxConnections: 5,
+//   maxMessages: 100,
+// });
+
 const transporter = nodemailer.createTransport({
-  service: process.env.EMAIL_SERVICE,
+  host: "smtp.zoho.com",
+  port: 587, // Use 587 for TLS, or 465 for SSL
+  secure: false, // true for 465, false for other ports
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    user: process.env.EMAIL_USER, // Your Zoho email
+    pass: process.env.EMAIL_PASS, // Your Zoho app password
   },
-  pool: true,
-  maxConnections: 5,
-  maxMessages: 100,
+  pool: true, // Use connection pooling
+  maxConnections: 5, // Maximum SMTP connections at a time
+  maxMessages: 100, // Maximum emails per connection
 });
 
+
+
 // Route to send bulk emails
+// app.post("/send-bulk-emails", async (req, res) => {
+//   const { emails, subject, text, html } = req.body;
+
+//   if (!emails || !Array.isArray(emails) || !subject || (!text && !html)) {
+//     return res.status(400).json({ message: "Invalid input data" });
+//   }
+
+//   let successCount = 0;
+//   let failedEmails = [];
+
+//   try {
+//     await Promise.all(
+//       emails.map(async (email) => {
+//         const mailOptions = {
+//           from: process.env.EMAIL_USER,
+//           to: email,
+//           subject,
+//           text: text || "",
+//           html: html || "",
+//         };
+
+//         try {
+//           await transporter.sendMail(mailOptions);
+//           successCount++;
+//           console.log(`Email sent to: ${email}`);
+//         } catch (error) {
+//           console.error(`Failed to send email to ${email}:`, error);
+//           failedEmails.push(email);
+//         }
+//       })
+//     );
+
+//     res.status(200).json({
+//       message: "Bulk email process completed",
+//       totalEmails: emails.length,
+//       sentSuccessfully: successCount,
+//       failedEmails,
+//     });
+//   } catch (error) {
+//     console.error("Error sending emails:", error);
+//     res.status(500).json({ message: "Failed to process bulk email sending" });
+//   }
+// });
+
+
 app.post("/send-bulk-emails", async (req, res) => {
   const { emails, subject, text, html } = req.body;
 
@@ -56,6 +116,7 @@ app.post("/send-bulk-emails", async (req, res) => {
   let failedEmails = [];
 
   try {
+    // Send all emails in parallel
     await Promise.all(
       emails.map(async (email) => {
         const mailOptions = {
@@ -69,9 +130,9 @@ app.post("/send-bulk-emails", async (req, res) => {
         try {
           await transporter.sendMail(mailOptions);
           successCount++;
-          console.log(`Email sent to: ${email}`);
+          console.log(`✅ Email sent to: ${email}`);
         } catch (error) {
-          console.error(`Failed to send email to ${email}:`, error);
+          console.error(`❌ Failed to send email to ${email}:`, error);
           failedEmails.push(email);
         }
       })
@@ -84,10 +145,11 @@ app.post("/send-bulk-emails", async (req, res) => {
       failedEmails,
     });
   } catch (error) {
-    console.error("Error sending emails:", error);
+    console.error("❌ Error sending emails:", error);
     res.status(500).json({ message: "Failed to process bulk email sending" });
   }
 });
+
 
 // Start the server
 app.listen(PORT, () => {
