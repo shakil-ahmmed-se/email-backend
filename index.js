@@ -46,16 +46,17 @@ app.use(express.json());
 
 const transporter = nodemailer.createTransport({
   host: "smtp.zoho.com",
-  port: 587, // Use 587 for TLS, or 465 for SSL
-  secure: false, // true for 465, false for other ports
+  port: 465, // Use 587 for TLS, or 465 for SSL
+  secure: true, // true for 465, false for other ports
   auth: {
-    user: process.env.EMAIL_USER, // Your Zoho email
-    pass: process.env.EMAIL_PASS, // Your Zoho app password
+    user: process.env.EMAIL_USER, // Zoho email
+    pass: process.env.EMAIL_PASS, // App password
   },
-  pool: true, // Use connection pooling
-  maxConnections: 5, // Maximum SMTP connections at a time
-  maxMessages: 100, // Maximum emails per connection
+  pool: true, // Enable connection pooling for better performance
+  maxConnections: 5,
+  maxMessages: 100,
 });
+
 
 
 
