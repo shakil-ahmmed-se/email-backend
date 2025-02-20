@@ -37,19 +37,18 @@ app.use(express.json());
 const transporter = nodemailer.createTransport({
   
   host: "mail.misterstorehub.shop",
-  
-  port: 465, // Use 587 for TLS, or 465 for SSL
-  secure: true, // true for 465, false for other ports
+  port: 587, // Use 587 for TLS, or 465 for SSL
+  secure: false, // true for 465, false for other ports
   auth: {
-    user: process.env.EMAIL_USER, // Zoho email
-    pass: process.env.EMAIL_PASS, // App password
+    user: process.env.EMAIL_USER, 
+    pass: process.env.EMAIL_PASS, 
   },
   tls: {
     rejectUnauthorized: false, // Ignore self-signed certificate issue
   },
   pool: true, // Enable connection pooling for better performance
-  maxConnections: 10,
-  maxMessages: 10000,
+  maxConnections: 20,
+  maxMessages: 50000,
 });
 
 
