@@ -35,7 +35,9 @@ app.use(express.json());
 
 
 const transporter = nodemailer.createTransport({
+  
   host: "mail.misterstorehub.shop",
+  
   port: 465, // Use 587 for TLS, or 465 for SSL
   secure: true, // true for 465, false for other ports
   auth: {
@@ -46,8 +48,8 @@ const transporter = nodemailer.createTransport({
     rejectUnauthorized: false, // Ignore self-signed certificate issue
   },
   pool: true, // Enable connection pooling for better performance
-  maxConnections: 5,
-  maxMessages: 100,
+  maxConnections: 10,
+  maxMessages: 10000,
 });
 
 
@@ -78,6 +80,7 @@ app.post("/send-bulk-emails", async (req, res) => {
           await transporter.sendMail(mailOptions);
           successCount++;
           logs.push(`✅ Email sent to: ${email}`);
+          console.log(`✅ Email sent to: ${email}`);
         } catch (error) {
           console.error(`❌ Failed to send email to ${email}:`, error);
           failedEmails.push(email);
