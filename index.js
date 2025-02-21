@@ -8,12 +8,10 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Convert ALLOWED_ORIGINS from .env into an array
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
-  : ["*"]; // Default: Allow all origins
+  : ["*"];
 
-// Enable CORS with multiple allowed origins
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -23,132 +21,102 @@ app.use(
         callback(new Error("CORS policy: This origin is not allowed"));
       }
     },
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["POST"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
 );
 
-// Middleware to parse JSON
 app.use(express.json());
 
+let smtpCredentials = [];
+let smtpUsageCount = {}; 
+let currentSmtpIndex = 0;
 
+const createTransporter = (smtp) => {
+  return nodemailer.createTransport({
+    host: smtp.host || "smtp.gmail.com",
+    port: smtp.port || 587,
+    secure: false,
+    auth: {
+      user: smtp.user,
+      pass: smtp.pass,
+    },
+    tls: {
+      rejectUnauthorized: false,
+    },
+    pool: true,
+    maxConnections: 20,
+    maxMessages: 50000,
+  });
+};
 
-const transporter = nodemailer.createTransport({
-  
-  host: "mail.misterstorehub.shop",
-  port: 587, // Use 587 for TLS, or 465 for SSL
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.EMAIL_USER, 
-    pass: process.env.EMAIL_PASS, 
-  },
-  tls: {
-    rejectUnauthorized: false, // Ignore self-signed certificate issue
-  },
-  pool: true, // Enable connection pooling for better performance
-  maxConnections: 20,
-  maxMessages: 50000,
-});
-
-
-app.post("/send-bulk-emails", async (req, res) => {
-  const { emails, subject, text, html } = req.body;
-
-  if (!emails || !Array.isArray(emails) || !subject || (!text && !html)) {
-    return res.status(400).json({ message: "Invalid input data" });
+const getNextTransporter = () => {
+  if (smtpCredentials.length === 0) {
+    throw new Error("No SMTP credentials available.");
   }
+  while (true) {
+    currentSmtpIndex = (currentSmtpIndex + 1) % smtpCredentials.length;
+    let smtp = smtpCredentials[currentSmtpIndex];
+    if (smtpUsageCount[smtp.user] < 450) {
+      return { transporter: createTransporter(smtp), smtp };
+    }
+  }
+};
+
+app.post("/send-emails", async (req, res) => {
+  const { smtp_credentials, emails, subject, text, html } = req.body;
+  if (!smtp_credentials || !Array.isArray(smtp_credentials) || smtp_credentials.length === 0) {
+    return res.status(400).json({ message: "Invalid SMTP credentials." });
+  }
+  if (!emails || !Array.isArray(emails) || emails.length === 0 || !subject || (!text && !html)) {
+    return res.status(400).json({ message: "Invalid email data." });
+  }
+
+  smtpCredentials = smtp_credentials;
+  smtpUsageCount = {};
+  smtp_credentials.forEach((cred) => {
+    smtpUsageCount[cred.user] = 0;
+  });
 
   let successCount = 0;
   let failedEmails = [];
-  let logs = []; // To store logs
+  let logs = [];
 
   try {
-    // Send all emails in parallel
-    await Promise.all(
-      emails.map(async (email) => {
-        const mailOptions = {
-          from: process.env.EMAIL_USER,
-          to: email,
-          subject,
-          text: text || "",
-          html: html || "",
-        };
+    for (let email of emails) {
+      let { transporter, smtp } = getNextTransporter();
+      const mailOptions = {
+        from: smtp.user,
+        to: email,
+        subject,
+        text: text || "",
+        html: html || "",
+      };
 
-        try {
-          await transporter.sendMail(mailOptions);
-          successCount++;
-          logs.push(`✅ Email sent to: ${email}`);
-          console.log(`✅ Email sent to: ${email}`);
-        } catch (error) {
-          console.error(`❌ Failed to send email to ${email}:`, error);
-          failedEmails.push(email);
-          logs.push(`❌ Failed to send email to ${email}: ${error.message}`);
-        }
-      })
-    );
+      try {
+        await transporter.sendMail(mailOptions);
+        successCount++;
+        smtpUsageCount[smtp.user]++;
+        logs.push(`✅ Sent to: ${email} using ${smtp.user}`);
+      } catch (error) {
+        failedEmails.push(email);
+        logs.push(`❌ Failed: ${email} - ${error.message}`);
+      }
+    }
 
     res.status(200).json({
       message: "Bulk email process completed",
       totalEmails: emails.length,
       sentSuccessfully: successCount,
       failedEmails,
-      logs, // Send logs to the frontend
+      logs,
     });
   } catch (error) {
-    console.error("❌ Error sending emails:", error);
-    res.status(500).json({ message: "Failed to process bulk email sending" });
+    res.status(500).json({ message: "Failed to process bulk email sending", error: error.message });
   }
 });
 
-
-// app.post("/send-bulk-emails", async (req, res) => {
-//   const { emails, subject, text, html } = req.body;
-
-//   if (!emails || !Array.isArray(emails) || !subject || (!text && !html)) {
-//     return res.status(400).json({ message: "Invalid input data" });
-//   }
-
-//   let successCount = 0;
-//   let failedEmails = [];
-
-//   try {
-//     // Send all emails in parallel
-//     await Promise.all(
-//       emails.map(async (email) => {
-//         const mailOptions = {
-//           from: process.env.EMAIL_USER,
-//           to: email,
-//           subject,
-//           text: text || "",
-//           html: html || "",
-//         };
-
-//         try {
-//           await transporter.sendMail(mailOptions);
-//           successCount++;
-//           console.log(`✅ Email sent to: ${email}`);
-//         } catch (error) {
-//           console.error(`❌ Failed to send email to ${email}:`, error);
-//           failedEmails.push(email);
-//         }
-//       })
-//     );
-
-//     res.status(200).json({
-//       message: "Bulk email process completed",
-//       totalEmails: emails.length,
-//       sentSuccessfully: successCount,
-//       failedEmails,
-//     });
-//   } catch (error) {
-//     console.error("❌ Error sending emails:", error);
-//     res.status(500).json({ message: "Failed to process bulk email sending" });
-//   }
-// });
-
-
-// Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server running at http://localhost:${PORT}`);
 });
