@@ -2,8 +2,6 @@ const express = require("express");
 const nodemailer = require("nodemailer");
 const dotenv = require("dotenv");
 const cors = require("cors");
-const multer = require("multer"); // For handling file uploads
-const path = require("path");
 
 dotenv.config();
 
@@ -30,18 +28,6 @@ app.use(
 );
 
 app.use(express.json());
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/"); // Save files in the "uploads" folder
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname); // Unique filename
-  },
-});
-
-const upload = multer({ storage });
 
 let smtpCredentials = [];
 let smtpUsageCount = {}; 
@@ -78,20 +64,8 @@ const getNextTransporter = () => {
   }
 };
 
-app.post("/send-emails", upload.single("attachment"), async (req, res) => {
-  let smtp_credentials, emails;
-
-  try {
-    // Parse smtp_credentials and emails from the request body
-    smtp_credentials = JSON.parse(req.body.smtp_credentials);
-    emails = JSON.parse(req.body.emails);
-  } catch (error) {
-    return res.status(400).json({ message: "Invalid JSON format for smtp_credentials or emails." });
-  }
-
-  const { subject, text, html } = req.body;
-  const attachment = req.file; // Uploaded file
-
+app.post("/send-emails", async (req, res) => {
+  const { smtp_credentials, emails, subject, text, html } = req.body;
   if (!smtp_credentials || !Array.isArray(smtp_credentials) || smtp_credentials.length === 0) {
     return res.status(400).json({ message: "Invalid SMTP credentials." });
   }
@@ -118,14 +92,6 @@ app.post("/send-emails", upload.single("attachment"), async (req, res) => {
         subject,
         text: text || "",
         html: html || "",
-        attachments: attachment
-          ? [
-              {
-                filename: attachment.originalname, // Use the original filename
-                path: attachment.path, // Path to the uploaded file
-              },
-            ]
-          : [],
       };
 
       try {
@@ -133,7 +99,6 @@ app.post("/send-emails", upload.single("attachment"), async (req, res) => {
         successCount++;
         smtpUsageCount[smtp.user]++;
         logs.push(`✅ Sent to: ${email} using ${smtp.user}`);
-        console.log(`✅ Sent to: ${email} using ${smtp.user}`);
       } catch (error) {
         failedEmails.push(email);
         logs.push(`❌ Failed: ${email} - ${error.message}`);
