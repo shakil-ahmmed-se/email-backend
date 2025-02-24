@@ -196,6 +196,11 @@ app.post("/send-emails", upload.single("attachment"), async (req, res) => {
   }
 });
 
+app.get('/', (req, res) => {
+  console.log("hello api");
+  res.send("hello api"); // Use res.send() to send a response
+});
+
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
