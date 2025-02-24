@@ -4,7 +4,7 @@ const dotenv = require("dotenv");
 const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
-const Bottleneck = require("bottleneck");
+const Bottleneck = require("bottleneck"); // For rate limiting
 
 dotenv.config();
 
@@ -35,10 +35,10 @@ app.use(express.json());
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "uploads/");
+    cb(null, "uploads/"); // Save files in the "uploads" folder
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
+    cb(null, Date.now() + "-" + file.originalname); // Unique filename
   },
 });
 
@@ -48,7 +48,7 @@ let smtpCredentials = [];
 let smtpUsageCount = {};
 let currentSmtpIndex = 0;
 
-// Optimized transporter configuration with increased limits
+// Create a transporter with connection pooling
 const createTransporter = (smtp) => {
   return nodemailer.createTransport({
     host: smtp.host || "smtp.gmail.com",
@@ -61,24 +61,33 @@ const createTransporter = (smtp) => {
     tls: {
       rejectUnauthorized: false,
     },
-    pool: true,
-    maxConnections: 50, // Increased from 20
-    maxMessages: 100000, // Increased from 50000
-    rateDelta: 1000, // Time between rate limit windows (1 second)
-    rateLimit: 50, // Messages per rate limit window
+    pool: true, // Enable connection pooling
+    maxConnections: 20, // Increase concurrent connections
+    maxMessages: 50000, // Increase messages per connection
   });
 };
 
-// Optimized rate limiter configuration
+// Get the next available SMTP transporter
+const getNextTransporter = () => {
+  if (smtpCredentials.length === 0) {
+    throw new Error("No SMTP credentials available.");
+  }
+  while (true) {
+    currentSmtpIndex = (currentSmtpIndex + 1) % smtpCredentials.length;
+    let smtp = smtpCredentials[currentSmtpIndex];
+    if (smtpUsageCount[smtp.user] < 490) {
+      return { transporter: createTransporter(smtp), smtp };
+    }
+  }
+};
+
+// Rate limiter to control email sending speed
 const limiter = new Bottleneck({
-  minTime: 20, // Decreased from 100ms to 20ms between tasks
-  maxConcurrent: 25, // Increased from 10 to 25 concurrent tasks
-  reservoir: 500, // Maximum number of tasks that can be executed in a given timeframe
-  reservoirRefreshAmount: 500, // Number of tasks to reload
-  reservoirRefreshInterval: 60 * 1000, // Refresh interval in milliseconds (1 minute)
+  minTime: 100, // Minimum time between tasks (in milliseconds)
+  maxConcurrent: 10, // Maximum number of tasks running at the same time
 });
 
-// Improved retry mechanism with exponential backoff
+// Retry mechanism for failed emails
 const sendWithRetry = async (email, transporter, mailOptions, retries = 3) => {
   for (let i = 0; i < retries; i++) {
     try {
@@ -88,30 +97,12 @@ const sendWithRetry = async (email, transporter, mailOptions, retries = 3) => {
       if (i === retries - 1) {
         return { success: false, email, error: error.message };
       }
-      // Exponential backoff: 200ms, 400ms, 800ms
-      await new Promise((resolve) => setTimeout(resolve, 200 * Math.pow(2, i)));
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1))); // Wait before retrying
     }
   }
 };
 
-// Batch processing for improved performance
-const processBatch = async (batch, smtp) => {
-  const transporter = createTransporter(smtp);
-  return Promise.all(
-    batch.map((email) => {
-      const mailOptions = {
-        from: smtp.user,
-        to: email.to,
-        subject: email.subject,
-        text: email.text || "",
-        html: email.html || "",
-        attachments: email.attachments || [],
-      };
-      return sendEmailLimited(email.to, transporter, mailOptions);
-    })
-  );
-};
-
+// Wrap the email sending function with the rate limiter
 const sendEmailLimited = limiter.wrap(async (email, transporter, mailOptions) => {
   return await sendWithRetry(email, transporter, mailOptions);
 });
@@ -120,6 +111,7 @@ app.post("/send-emails", upload.single("attachment"), async (req, res) => {
   let smtp_credentials, emails;
 
   try {
+    // Parse smtp_credentials and emails from the request body
     smtp_credentials = JSON.parse(req.body.smtp_credentials);
     emails = JSON.parse(req.body.emails);
   } catch (error) {
@@ -127,7 +119,7 @@ app.post("/send-emails", upload.single("attachment"), async (req, res) => {
   }
 
   const { subject, text, html } = req.body;
-  const attachment = req.file;
+  const attachment = req.file; // Uploaded file
 
   if (!smtp_credentials || !Array.isArray(smtp_credentials) || smtp_credentials.length === 0) {
     return res.status(400).json({ message: "Invalid SMTP credentials." });
@@ -147,42 +139,36 @@ app.post("/send-emails", upload.single("attachment"), async (req, res) => {
   let logs = [];
 
   try {
-    // Process emails in batches of 50
-    const BATCH_SIZE = 50;
-    const batches = [];
-    
-    for (let i = 0; i < emails.length; i += BATCH_SIZE) {
-      const batch = emails.slice(i, i + BATCH_SIZE).map(email => ({
+    for (let email of emails) {
+      let { transporter, smtp } = getNextTransporter();
+      const mailOptions = {
+        from: smtp.user,
         to: email,
         subject,
-        text,
-        html,
-        attachments: attachment ? [{
-          filename: attachment.originalname,
-          path: attachment.path,
-        }] : [],
-      }));
-      batches.push(batch);
-    }
+        text: text || "",
+        html: html || "",
+        attachments: attachment
+          ? [
+              {
+                filename: attachment.originalname, // Use the original filename
+                path: attachment.path, // Path to the uploaded file
+              },
+            ]
+          : [],
+      };
 
-    // Process batches concurrently with different SMTP credentials
-    const batchResults = await Promise.all(
-      batches.map((batch, index) => {
-        const smtpIndex = index % smtp_credentials.length;
-        return processBatch(batch, smtp_credentials[smtpIndex]);
-      })
-    );
-
-    // Aggregate results
-    batchResults.flat().forEach(result => {
+      const result = await sendEmailLimited(email, transporter, mailOptions);
       if (result.success) {
         successCount++;
-        logs.push(`✅ Sent to: ${result.email}`);
+        smtpUsageCount[smtp.user]++;
+        logs.push(`✅ Sent to: ${email} using ${smtp.user}`);
+        console.log(`✅ Sent to: ${email} using ${smtp.user}`);
       } else {
-        failedEmails.push(result.email);
-        logs.push(`❌ Failed: ${result.email} - ${result.error}`);
+        failedEmails.push(email);
+        logs.push(`❌ Failed: ${email} - ${result.error}`);
+        console.log(`❌ Failed: ${email} - ${result.error}`);
       }
-    });
+    }
 
     res.status(200).json({
       message: "Bulk email process completed",
